@@ -1,12 +1,12 @@
 import os
 import io
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from groq import Groq
 import PyPDF2
 from dotenv import load_dotenv
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
 class PingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -68,14 +68,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
     total_pages = len(pdf_reader.pages)
-    
+
     text = ""
     for i, page in enumerate(pdf_reader.pages):
         if i >= 20:
             break
-        text += page.extract_text()
+        extracted = page.extract_text()
+        if extracted:
+            text += extracted
 
-    text = text[:15000]
+    text = text[:12000]
     context.user_data['document'] = text
 
     pages_analysed = min(total_pages, 20)
@@ -100,23 +102,31 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("🔍 Phoenix Docs is analysing...")
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are Phoenix Docs, part of the Phoenix AI platform. You are a powerful document analyst. Answer questions based only on the document provided. Be clear, precise and helpful. If asked for a summary, provide a comprehensive but concise summary."
-            },
-            {
-                "role": "user",
-                "content": f"Document:\n{document}\n\nQuestion:\n{question}"
-            }
-        ],
-        max_tokens=1000
-    )
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are Phoenix Docs, part of the Phoenix AI platform. You are a powerful document analyst. Answer questions based only on the document provided. Be clear, precise and helpful. Keep answers under 500 words."
+                },
+                {
+                    "role": "user",
+                    "content": f"Document:\n{document}\n\nQuestion:\n{question}"
+                }
+            ],
+            max_tokens=800,
+            timeout=25
+        )
 
-    answer = response.choices[0].message.content
-    await update.message.reply_text(answer)
+        answer = response.choices[0].message.content
+        await update.message.reply_text(answer)
+
+    except Exception as e:
+        await update.message.reply_text(
+            "⚠️ Analysis timed out. Please try again.\n"
+            "If the document is large try asking a simpler question."
+        )
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
