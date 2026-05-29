@@ -5,6 +5,22 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from groq import Groq
 import PyPDF2
 from dotenv import load_dotenv
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Phoenix AI is alive")
+    def log_message(self, format, *args):
+        pass
+
+def run_server():
+    server = HTTPServer(("0.0.0.0", 8080), PingHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
 
 load_dotenv()
 
