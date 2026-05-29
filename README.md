@@ -15,7 +15,7 @@ and answers questions about it instantly.
 - Telegram Bot API
 
 ## Try It
-Search @your_bot_username on Telegram
+Search @Phoenixai_bot
 
 ## Developer
 Built by Chidibless | Nigeria 🇳🇬
