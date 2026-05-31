@@ -40,11 +40,10 @@ client = Groq(api_key=GROQ_API_KEY)
 # ─── RAG SYSTEM ───────────────────────────────────────────
 
 def tokenize(text):
-    """Lowercase and extract meaningful word tokens."""
     return re.findall(r'\b[a-z]{2,}\b', text.lower())
 
-def chunk_text(text, chunk_size=250, overlap=40):
-    """Split text into overlapping word chunks."""
+def chunk_text(text, chunk_size=120, overlap=20):
+    """Split text into overlapping word chunks (smaller = better retrieval)."""
     words = text.split()
     chunks = []
     i = 0
@@ -57,9 +56,8 @@ def chunk_text(text, chunk_size=250, overlap=40):
     return chunks
 
 def build_index(chunks):
-    """Build TF-IDF inverted index from chunks."""
-    index = defaultdict(list)   # term -> [(chunk_id, tf)]
-    doc_freq = defaultdict(int) # term -> number of chunks containing it
+    index = defaultdict(list)
+    doc_freq = defaultdict(int)
 
     for cid, chunk in enumerate(chunks):
         tokens = tokenize(chunk)
@@ -76,7 +74,6 @@ def build_index(chunks):
     return index, doc_freq
 
 def retrieve_chunks(query, chunks, index, doc_freq, top_k=4):
-    """Score and return the top_k most relevant chunks for a query."""
     query_tokens = tokenize(query)
     n = len(chunks)
     scores = defaultdict(float)
@@ -89,14 +86,12 @@ def retrieve_chunks(query, chunks, index, doc_freq, top_k=4):
             scores[cid] += tf * idf
 
     if not scores:
-        # Fallback: return first top_k chunks if no match
         return chunks[:top_k]
 
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     return [chunks[cid] for cid, _ in ranked[:top_k]]
 
 def index_document(text):
-    """Index a document and return the RAG store dict."""
     chunks = chunk_text(text)
     index, doc_freq = build_index(chunks)
     return {
@@ -107,7 +102,6 @@ def index_document(text):
     }
 
 def build_rag_context(query, rag_store):
-    """Retrieve relevant chunks and format as context string."""
     top_chunks = retrieve_chunks(
         query,
         rag_store["chunks"],
@@ -138,7 +132,6 @@ def ask_groq(system_prompt, user_prompt):
     return response.choices[0].message.content
 
 def ask_groq_rag(system_prompt, question, context_text):
-    """Ask Groq using retrieved RAG context only."""
     user_prompt = (
         f"Use ONLY the document excerpts below to answer the question.\n"
         f"If the answer is not found in the excerpts, say: "
@@ -147,6 +140,34 @@ def ask_groq_rag(system_prompt, question, context_text):
         f"Question: {question}"
     )
     return ask_groq(system_prompt, user_prompt)
+
+# ─── INTENT DETECTION ─────────────────────────────────────
+
+SUMMARISE_KEYWORDS = [
+    "summarise", "summarize", "summary", "summarise all",
+    "give me a summary", "what is this document about",
+    "overview", "give overview"
+]
+
+QUIZ_KEYWORDS = [
+    "quiz", "test me", "generate quiz", "quiz me",
+    "give me questions", "make questions"
+]
+
+COMPARE_KEYWORDS = [
+    "compare", "difference between", "similarities",
+    "compare documents", "compare both"
+]
+
+def detect_intent(text):
+    t = text.lower()
+    if any(k in t for k in SUMMARISE_KEYWORDS):
+        return "summarise"
+    if any(k in t for k in QUIZ_KEYWORDS):
+        return "quiz"
+    if any(k in t for k in COMPARE_KEYWORDS):
+        return "compare"
+    return "question"
 
 # ─── COMMAND HANDLERS ─────────────────────────────────────
 
@@ -227,7 +248,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/compare - Compare two documents\n"
         "/language - Set response language\n"
         "/clear - Clear current document\n\n"
-        "🧠 v4: Smart RAG search active\n"
+        "🧠 v4: Smart RAG search active.\n"
         "Ask any question for precise answers."
     )
 
@@ -303,7 +324,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_second:
         context.user_data['document2'] = text
-        # Index second document for RAG too
         context.user_data['rag2'] = index_document(text)
         keyboard = [
             [InlineKeyboardButton("🔍 Compare now", callback_data="compare")]
@@ -319,11 +339,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['document'] = text
         context.user_data['doc_name'] = doc.file_name
 
-        # ── Build RAG index ──
         await update.message.reply_text("🧠 Building smart search index...")
         rag_store = index_document(text)
         context.user_data['rag'] = rag_store
-        # ────────────────────
 
         pages_analysed = min(total_pages, 20)
         keyboard = [
@@ -359,7 +377,7 @@ async def handle_summarise(message, context):
     try:
         answer = ask_groq(
             f"You are Phoenix Docs. Provide a comprehensive summary. Respond in {lang}.",
-            f"Document:\n{document}\n\nProvide a detailed summary."
+            f"Document:\n{document}\n\nProvide a detailed summary covering all key points."
         )
         await message.reply_text(f"📝 Summary:\n\n{answer}")
     except Exception:
@@ -412,7 +430,7 @@ async def handle_compare_request(message, context):
     except Exception:
         await message.reply_text("⚠️ Comparison timed out. Please try again.")
 
-# ─── QUESTION HANDLER (RAG-POWERED) ───────────────────────
+# ─── QUESTION HANDLER (RAG + INTENT ROUTING) ──────────────
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'document' not in context.user_data:
@@ -426,6 +444,19 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question = update.message.text
     lang = context.user_data.get('language', 'English')
 
+    # ── Route by intent first ──
+    intent = detect_intent(question)
+    if intent == "summarise":
+        await handle_summarise(update.message, context)
+        return
+    if intent == "quiz":
+        await handle_quiz(update.message, context)
+        return
+    if intent == "compare":
+        await handle_compare_request(update.message, context)
+        return
+
+    # ── RAG question answering ──
     await notify_admin(
         context,
         f"❓ Question Asked\n\n"
@@ -441,7 +472,6 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rag_store = context.user_data.get('rag')
 
         if rag_store:
-            # ── RAG path: retrieve relevant chunks, answer from them ──
             context_text = build_rag_context(question, rag_store)
             answer = ask_groq_rag(
                 f"You are Phoenix Docs. Answer questions based only on the provided "
@@ -451,7 +481,6 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context_text
             )
         else:
-            # ── Fallback: full document (old v3 behaviour) ──
             document = context.user_data['document']
             answer = ask_groq(
                 f"You are Phoenix Docs. Answer questions based only on the document. "
@@ -504,7 +533,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question))
 
-    print("🔥 Phoenix Docs v4 is running...")
+    print("🔥 Phoenix Docs v4.1 is running...")
     app.run_polling()
 
 if __name__ == "__main__":
