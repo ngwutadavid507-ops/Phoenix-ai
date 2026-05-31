@@ -1,12 +1,17 @@
 import os
 import io
+import re
+import math
 import threading
+from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from groq import Groq
 import PyPDF2
 from dotenv import load_dotenv
+
+# ─── KEEP-ALIVE SERVER ────────────────────────────────────
 
 class PingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -22,6 +27,8 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
+# ─── ENV & CLIENT ─────────────────────────────────────────
+
 load_dotenv()
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -29,6 +36,88 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 
 client = Groq(api_key=GROQ_API_KEY)
+
+# ─── RAG SYSTEM ───────────────────────────────────────────
+
+def tokenize(text):
+    """Lowercase and extract meaningful word tokens."""
+    return re.findall(r'\b[a-z]{2,}\b', text.lower())
+
+def chunk_text(text, chunk_size=250, overlap=40):
+    """Split text into overlapping word chunks."""
+    words = text.split()
+    chunks = []
+    i = 0
+    while i < len(words):
+        chunk = " ".join(words[i:i + chunk_size])
+        chunks.append(chunk)
+        if i + chunk_size >= len(words):
+            break
+        i += chunk_size - overlap
+    return chunks
+
+def build_index(chunks):
+    """Build TF-IDF inverted index from chunks."""
+    index = defaultdict(list)   # term -> [(chunk_id, tf)]
+    doc_freq = defaultdict(int) # term -> number of chunks containing it
+
+    for cid, chunk in enumerate(chunks):
+        tokens = tokenize(chunk)
+        if not tokens:
+            continue
+        freq = defaultdict(int)
+        for token in tokens:
+            freq[token] += 1
+        for token, count in freq.items():
+            tf = count / len(tokens)
+            index[token].append((cid, tf))
+            doc_freq[token] += 1
+
+    return index, doc_freq
+
+def retrieve_chunks(query, chunks, index, doc_freq, top_k=4):
+    """Score and return the top_k most relevant chunks for a query."""
+    query_tokens = tokenize(query)
+    n = len(chunks)
+    scores = defaultdict(float)
+
+    for token in query_tokens:
+        if token not in index:
+            continue
+        idf = math.log((n + 1) / (doc_freq[token] + 1)) + 1.0
+        for cid, tf in index[token]:
+            scores[cid] += tf * idf
+
+    if not scores:
+        # Fallback: return first top_k chunks if no match
+        return chunks[:top_k]
+
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [chunks[cid] for cid, _ in ranked[:top_k]]
+
+def index_document(text):
+    """Index a document and return the RAG store dict."""
+    chunks = chunk_text(text)
+    index, doc_freq = build_index(chunks)
+    return {
+        "chunks": chunks,
+        "index": index,
+        "doc_freq": doc_freq,
+        "total_chunks": len(chunks)
+    }
+
+def build_rag_context(query, rag_store):
+    """Retrieve relevant chunks and format as context string."""
+    top_chunks = retrieve_chunks(
+        query,
+        rag_store["chunks"],
+        rag_store["index"],
+        rag_store["doc_freq"],
+        top_k=4
+    )
+    return "\n\n---\n\n".join(top_chunks)
+
+# ─── AI HELPERS ───────────────────────────────────────────
 
 async def notify_admin(context, message):
     try:
@@ -47,6 +136,19 @@ def ask_groq(system_prompt, user_prompt):
         timeout=25
     )
     return response.choices[0].message.content
+
+def ask_groq_rag(system_prompt, question, context_text):
+    """Ask Groq using retrieved RAG context only."""
+    user_prompt = (
+        f"Use ONLY the document excerpts below to answer the question.\n"
+        f"If the answer is not found in the excerpts, say: "
+        f"'I could not find that in your document.'\n\n"
+        f"Document excerpts:\n{context_text}\n\n"
+        f"Question: {question}"
+    )
+    return ask_groq(system_prompt, user_prompt)
+
+# ─── COMMAND HANDLERS ─────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -71,7 +173,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "→ ❓ Answer questions about it\n"
         "→ 🎯 Generate quiz questions\n"
         "→ 🔍 Compare two documents\n"
-        "→ 🌍 Respond in your language\n\n"
+        "→ 🌍 Respond in your language\n"
+        "→ 🧠 RAG-powered smart search\n\n"
         "Send me a PDF to get started.",
         reply_markup=reply_markup
     )
@@ -92,7 +195,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/compare - Compare two documents\n"
             "/language - Set response language\n"
             "/clear - Clear current document\n\n"
-            "Or just ask any question about it!"
+            "Or just ask any question about it!\n\n"
+            "🧠 v4: Questions now use smart RAG search\n"
+            "for more accurate answers."
         )
     elif query.data == "about":
         await query.message.reply_text(
@@ -121,7 +226,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/quiz - Generate quiz from document\n"
         "/compare - Compare two documents\n"
         "/language - Set response language\n"
-        "/clear - Clear current document"
+        "/clear - Clear current document\n\n"
+        "🧠 v4: Smart RAG search active\n"
+        "Ask any question for precise answers."
     )
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,6 +258,8 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌍 Choose your response language:",
         reply_markup=reply_markup
     )
+
+# ─── DOCUMENT HANDLER ─────────────────────────────────────
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -194,6 +303,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_second:
         context.user_data['document2'] = text
+        # Index second document for RAG too
+        context.user_data['rag2'] = index_document(text)
         keyboard = [
             [InlineKeyboardButton("🔍 Compare now", callback_data="compare")]
         ]
@@ -207,8 +318,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         context.user_data['document'] = text
         context.user_data['doc_name'] = doc.file_name
-        pages_analysed = min(total_pages, 20)
 
+        # ── Build RAG index ──
+        await update.message.reply_text("🧠 Building smart search index...")
+        rag_store = index_document(text)
+        context.user_data['rag'] = rag_store
+        # ────────────────────
+
+        pages_analysed = min(total_pages, 20)
         keyboard = [
             [
                 InlineKeyboardButton("📝 Summarise", callback_data="summarise"),
@@ -219,14 +336,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
         await update.message.reply_text(
-            f"✅ Document loaded successfully\n\n"
+            f"✅ Document loaded & indexed\n\n"
             f"📊 Total pages: {total_pages}\n"
-            f"🔍 Pages analysed: {pages_analysed}\n\n"
+            f"🔍 Pages analysed: {pages_analysed}\n"
+            f"🧠 RAG chunks indexed: {rag_store['total_chunks']}\n\n"
             f"What would you like to do?",
             reply_markup=reply_markup
         )
+
+# ─── FEATURE HANDLERS ─────────────────────────────────────
 
 async def handle_summarise(message, context):
     if 'document' not in context.user_data:
@@ -293,14 +412,7 @@ async def handle_compare_request(message, context):
     except Exception:
         await message.reply_text("⚠️ Comparison timed out. Please try again.")
 
-async def summarise_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await handle_summarise(update.message, context)
-
-async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await handle_quiz(update.message, context)
-
-async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await handle_compare_request(update.message, context)
+# ─── QUESTION HANDLER (RAG-POWERED) ───────────────────────
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'document' not in context.user_data:
@@ -312,7 +424,6 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
     question = update.message.text
-    document = context.user_data['document']
     lang = context.user_data.get('language', 'English')
 
     await notify_admin(
@@ -324,17 +435,36 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Time: {update.message.date}"
     )
 
-    await update.message.reply_text("🔍 Phoenix Docs is analysing...")
+    await update.message.reply_text("🧠 Searching your document...")
 
     try:
-        answer = ask_groq(
-            f"You are Phoenix Docs. Answer questions based only on the document. "
-            f"Be clear and helpful. Keep answers under 500 words. Respond in {lang}.",
-            f"Document:\n{document}\n\nQuestion:\n{question}"
-        )
+        rag_store = context.user_data.get('rag')
+
+        if rag_store:
+            # ── RAG path: retrieve relevant chunks, answer from them ──
+            context_text = build_rag_context(question, rag_store)
+            answer = ask_groq_rag(
+                f"You are Phoenix Docs. Answer questions based only on the provided "
+                f"document excerpts. Be clear and helpful. "
+                f"Keep answers under 500 words. Respond in {lang}.",
+                question,
+                context_text
+            )
+        else:
+            # ── Fallback: full document (old v3 behaviour) ──
+            document = context.user_data['document']
+            answer = ask_groq(
+                f"You are Phoenix Docs. Answer questions based only on the document. "
+                f"Be clear and helpful. Keep answers under 500 words. Respond in {lang}.",
+                f"Document:\n{document}\n\nQuestion:\n{question}"
+            )
+
         await update.message.reply_text(answer)
+
     except Exception:
         await update.message.reply_text("⚠️ Analysis timed out. Please try again.")
+
+# ─── LANGUAGE CALLBACK ────────────────────────────────────
 
 async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -345,6 +475,19 @@ async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT
         f"✅ Language set to {lang}\n\n"
         f"All responses will now be in {lang}."
     )
+
+# ─── COMMAND WRAPPERS ─────────────────────────────────────
+
+async def summarise_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_summarise(update.message, context)
+
+async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_quiz(update.message, context)
+
+async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_compare_request(update.message, context)
+
+# ─── MAIN ─────────────────────────────────────────────────
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -361,7 +504,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question))
 
-    print("🔥 Phoenix Docs is running...")
+    print("🔥 Phoenix Docs v4 is running...")
     app.run_polling()
 
 if __name__ == "__main__":
