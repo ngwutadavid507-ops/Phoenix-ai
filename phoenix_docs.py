@@ -26,8 +26,15 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+ADMIN_ID = os.environ.get("ADMIN_ID")
 
 client = Groq(api_key=GROQ_API_KEY)
+
+async def notify_admin(context, message):
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=message)
+    except:
+        pass
 
 def ask_groq(system_prompt, user_prompt):
     response = client.chat.completions.create(
@@ -42,6 +49,15 @@ def ask_groq(system_prompt, user_prompt):
     return response.choices[0].message.content
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await notify_admin(
+        context,
+        f"🔔 New User Started Bot\n\n"
+        f"Name: {user.full_name}\n"
+        f"Username: @{user.username}\n"
+        f"ID: {user.id}\n"
+        f"Time: {update.message.date}"
+    )
     keyboard = [
         [InlineKeyboardButton("📄 How to use", callback_data="how_to_use")],
         [InlineKeyboardButton("ℹ️ About Phoenix AI", callback_data="about")]
@@ -73,8 +89,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Commands after sending PDF:\n"
             "/summarise - Get full summary\n"
             "/quiz - Generate quiz questions\n"
+            "/compare - Compare two documents\n"
+            "/language - Set response language\n"
             "/clear - Clear current document\n\n"
-            "Or just ask any question about your document!"
+            "Or just ask any question about it!"
         )
     elif query.data == "about":
         await query.message.reply_text(
@@ -135,13 +153,21 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
     doc = update.message.document
 
     if not doc.file_name.lower().endswith('.pdf'):
-        await update.message.reply_text(
-            "⚠️ Please send a PDF file only."
-        )
+        await update.message.reply_text("⚠️ Please send a PDF file only.")
         return
+
+    await notify_admin(
+        context,
+        f"📄 Document Uploaded\n\n"
+        f"Name: {user.full_name}\n"
+        f"Username: @{user.username}\n"
+        f"File: {doc.file_name}\n"
+        f"Time: {update.message.date}"
+    )
 
     is_second = 'document' in context.user_data
 
@@ -208,7 +234,6 @@ async def handle_summarise(message, context):
         return
 
     await message.reply_text("📝 Generating summary...")
-
     lang = context.user_data.get('language', 'English')
     document = context.user_data['document']
 
@@ -227,13 +252,12 @@ async def handle_quiz(message, context):
         return
 
     await message.reply_text("🎯 Generating quiz questions...")
-
     lang = context.user_data.get('language', 'English')
     document = context.user_data['document']
 
     try:
         answer = ask_groq(
-            f"You are Phoenix Docs. Generate quiz questions from the document. Respond in {lang}.",
+            f"You are Phoenix Docs. Generate quiz questions. Respond in {lang}.",
             f"Document:\n{document}\n\n"
             f"Generate 5 multiple choice questions with 4 options each (A, B, C, D). "
             f"Include the correct answer at the end of each question."
@@ -248,13 +272,10 @@ async def handle_compare_request(message, context):
         return
 
     if 'document2' not in context.user_data:
-        await message.reply_text(
-            "📄 Send me the second PDF to compare with."
-        )
+        await message.reply_text("📄 Send me the second PDF to compare with.")
         return
 
     await message.reply_text("🔍 Comparing documents...")
-
     lang = context.user_data.get('language', 'English')
     doc1 = context.user_data['document']
     doc2 = context.user_data['document2']
@@ -289,9 +310,19 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    user = update.effective_user
     question = update.message.text
     document = context.user_data['document']
     lang = context.user_data.get('language', 'English')
+
+    await notify_admin(
+        context,
+        f"❓ Question Asked\n\n"
+        f"Name: {user.full_name}\n"
+        f"Username: @{user.username}\n"
+        f"Question: {question}\n"
+        f"Time: {update.message.date}"
+    )
 
     await update.message.reply_text("🔍 Phoenix Docs is analysing...")
 
@@ -303,17 +334,13 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(answer)
     except Exception:
-        await update.message.reply_text(
-            "⚠️ Analysis timed out. Please try again."
-        )
+        await update.message.reply_text("⚠️ Analysis timed out. Please try again.")
 
 async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     lang = query.data.replace("lang_", "")
     context.user_data['language'] = lang
-
     await query.message.reply_text(
         f"✅ Language set to {lang}\n\n"
         f"All responses will now be in {lang}."
