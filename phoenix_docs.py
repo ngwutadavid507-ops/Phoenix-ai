@@ -11,8 +11,6 @@ from groq import Groq
 import PyPDF2
 from dotenv import load_dotenv
 
-# ─── KEEP-ALIVE SERVER ────────────────────────────────────
-
 class PingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -27,8 +25,6 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# ─── ENV & CLIENT ─────────────────────────────────────────
-
 load_dotenv()
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -37,13 +33,10 @@ ADMIN_ID = os.environ.get("ADMIN_ID")
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# ─── RAG SYSTEM ───────────────────────────────────────────
-
 def tokenize(text):
     return re.findall(r'\b[a-z]{2,}\b', text.lower())
 
 def chunk_text(text, chunk_size=120, overlap=20):
-    """Split text into overlapping word chunks (smaller = better retrieval)."""
     words = text.split()
     chunks = []
     i = 0
@@ -58,7 +51,6 @@ def chunk_text(text, chunk_size=120, overlap=20):
 def build_index(chunks):
     index = defaultdict(list)
     doc_freq = defaultdict(int)
-
     for cid, chunk in enumerate(chunks):
         tokens = tokenize(chunk)
         if not tokens:
@@ -70,24 +62,20 @@ def build_index(chunks):
             tf = count / len(tokens)
             index[token].append((cid, tf))
             doc_freq[token] += 1
-
     return index, doc_freq
 
 def retrieve_chunks(query, chunks, index, doc_freq, top_k=4):
     query_tokens = tokenize(query)
     n = len(chunks)
     scores = defaultdict(float)
-
     for token in query_tokens:
         if token not in index:
             continue
         idf = math.log((n + 1) / (doc_freq[token] + 1)) + 1.0
         for cid, tf in index[token]:
             scores[cid] += tf * idf
-
     if not scores:
         return chunks[:top_k]
-
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     return [chunks[cid] for cid, _ in ranked[:top_k]]
 
@@ -110,8 +98,6 @@ def build_rag_context(query, rag_store):
         top_k=4
     )
     return "\n\n---\n\n".join(top_chunks)
-
-# ─── AI HELPERS ───────────────────────────────────────────
 
 async def notify_admin(context, message):
     try:
@@ -141,8 +127,6 @@ def ask_groq_rag(system_prompt, question, context_text):
     )
     return ask_groq(system_prompt, user_prompt)
 
-# ─── INTENT DETECTION ─────────────────────────────────────
-
 SUMMARISE_KEYWORDS = [
     "summarise", "summarize", "summary", "summarise all",
     "give me a summary", "what is this document about",
@@ -169,8 +153,6 @@ def detect_intent(text):
         return "compare"
     return "question"
 
-# ─── COMMAND HANDLERS ─────────────────────────────────────
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await notify_admin(
@@ -191,12 +173,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Part of the Phoenix AI platform\n\n"
         "What I can do:\n"
         "→ 📝 Summarise any document\n"
-        "→ ❓ Answer questions about it\n"
+        "→ ❓ Answer any question\n"
         "→ 🎯 Generate quiz questions\n"
         "→ 🔍 Compare two documents\n"
         "→ 🌍 Respond in your language\n"
         "→ 🧠 RAG-powered smart search\n\n"
-        "Send me a PDF to get started.",
+        "Send me a PDF or ask me anything!",
         reply_markup=reply_markup
     )
 
@@ -207,18 +189,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "how_to_use":
         await query.message.reply_text(
             "📖 How to use Phoenix Docs\n\n"
-            "1. Send any PDF document\n"
-            "2. Wait for confirmation\n"
+            "1. Ask me any question directly\n"
+            "2. Or send a PDF for deeper analysis\n"
             "3. Choose what you want:\n\n"
-            "Commands after sending PDF:\n"
-            "/summarise - Get full summary\n"
+            "Commands:\n"
+            "/summarise - Summarise document\n"
             "/quiz - Generate quiz questions\n"
             "/compare - Compare two documents\n"
             "/language - Set response language\n"
             "/clear - Clear current document\n\n"
-            "Or just ask any question about it!\n\n"
-            "🧠 v4: Questions now use smart RAG search\n"
-            "for more accurate answers."
+            "🧠 v4: Smart RAG search active"
         )
     elif query.data == "about":
         await query.message.reply_text(
@@ -249,7 +229,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/language - Set response language\n"
         "/clear - Clear current document\n\n"
         "🧠 v4: Smart RAG search active.\n"
-        "Ask any question for precise answers."
+        "Ask anything even without a document!"
     )
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -279,8 +259,6 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌍 Choose your response language:",
         reply_markup=reply_markup
     )
-
-# ─── DOCUMENT HANDLER ─────────────────────────────────────
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -313,14 +291,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_pages = len(pdf_reader.pages)
 
     text = ""
-    for i, page in enumerate(pdf_reader.pages):
-        if i >= 20:
-            break
+    for page in pdf_reader.pages:
         extracted = page.extract_text()
         if extracted:
             text += extracted
-
-    text = text[:12000]
 
     if is_second:
         context.user_data['document2'] = text
@@ -343,7 +317,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rag_store = index_document(text)
         context.user_data['rag'] = rag_store
 
-        pages_analysed = min(total_pages, 20)
         keyboard = [
             [
                 InlineKeyboardButton("📝 Summarise", callback_data="summarise"),
@@ -354,16 +327,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
+
         await update.message.reply_text(
             f"✅ Document loaded & indexed\n\n"
             f"📊 Total pages: {total_pages}\n"
-            f"🔍 Pages analysed: {pages_analysed}\n"
-            f"🧠 RAG chunks indexed: {rag_store['total_chunks']}\n\n"
+            f"🧠 RAG chunks: {rag_store['total_chunks']}\n\n"
             f"What would you like to do?",
             reply_markup=reply_markup
         )
-
-# ─── FEATURE HANDLERS ─────────────────────────────────────
 
 async def handle_summarise(message, context):
     if 'document' not in context.user_data:
@@ -430,21 +401,39 @@ async def handle_compare_request(message, context):
     except Exception:
         await message.reply_text("⚠️ Comparison timed out. Please try again.")
 
-# ─── QUESTION HANDLER (RAG + INTENT ROUTING) ──────────────
-
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'document' not in context.user_data:
-        await update.message.reply_text(
-            "⚠️ No document loaded.\n"
-            "Please send a PDF first."
-        )
-        return
-
     user = update.effective_user
     question = update.message.text
     lang = context.user_data.get('language', 'English')
 
-    # ── Route by intent first ──
+    await notify_admin(
+        context,
+        f"❓ Question Asked\n\n"
+        f"Name: {user.full_name}\n"
+        f"Username: @{user.username}\n"
+        f"Question: {question}\n"
+        f"Time: {update.message.date}"
+    )
+
+    if 'document' not in context.user_data:
+        await update.message.reply_text("🔍 Phoenix Docs is thinking...")
+        try:
+            answer = ask_groq(
+                f"You are Phoenix Docs, part of the Phoenix AI platform. "
+                f"A powerful AI assistant built by Chidibless from Nigeria. "
+                f"Answer any question helpfully and accurately. "
+                f"If the question is about documents mention that the user "
+                f"can send a PDF for deeper analysis. "
+                f"Be clear and concise. Respond in {lang}.",
+                question
+            )
+            await update.message.reply_text(answer)
+        except Exception:
+            await update.message.reply_text(
+                "⚠️ Something went wrong. Please try again."
+            )
+        return
+
     intent = detect_intent(question)
     if intent == "summarise":
         await handle_summarise(update.message, context)
@@ -455,16 +444,6 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if intent == "compare":
         await handle_compare_request(update.message, context)
         return
-
-    # ── RAG question answering ──
-    await notify_admin(
-        context,
-        f"❓ Question Asked\n\n"
-        f"Name: {user.full_name}\n"
-        f"Username: @{user.username}\n"
-        f"Question: {question}\n"
-        f"Time: {update.message.date}"
-    )
 
     await update.message.reply_text("🧠 Searching your document...")
 
@@ -493,8 +472,6 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("⚠️ Analysis timed out. Please try again.")
 
-# ─── LANGUAGE CALLBACK ────────────────────────────────────
-
 async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -505,8 +482,6 @@ async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT
         f"All responses will now be in {lang}."
     )
 
-# ─── COMMAND WRAPPERS ─────────────────────────────────────
-
 async def summarise_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_summarise(update.message, context)
 
@@ -515,8 +490,6 @@ async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_compare_request(update.message, context)
-
-# ─── MAIN ─────────────────────────────────────────────────
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
