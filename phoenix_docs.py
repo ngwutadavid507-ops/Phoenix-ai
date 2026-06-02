@@ -10,6 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from groq import Groq
 import PyPDF2
 from dotenv import load_dotenv
+from duckduckgo_search import DDGS
 
 load_dotenv()
 
@@ -18,6 +19,31 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 
 client = Groq(api_key=GROQ_API_KEY)
+
+def web_search(query, max_results=3):
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+            if not results:
+                return None
+            search_text = ""
+            for r in results:
+                search_text += f"Title: {r.get('title', '')}\n"
+                search_text += f"Summary: {r.get('body', '')}\n\n"
+            return search_text
+    except Exception:
+        return None
+
+def needs_web_search(question):
+    current_keywords = [
+        "current", "now", "today", "latest", "recent", "right now",
+        "this year", "2024", "2025", "2026", "who is the president",
+        "who is president", "prime minister", "ceo of", "price of",
+        "stock price", "weather", "news", "just happened", "recently",
+        "score", "winner", "election", "result"
+    ]
+    q = question.lower()
+    return any(k in q for k in current_keywords)
 
 def tokenize(text):
     return re.findall(r'\b[a-z]{2,}\b', text.lower())
@@ -164,7 +190,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "→ 🔍 Compare two documents\n"
         "→ 🌍 Respond in your language\n"
         "→ 🧠 RAG-powered smart search\n"
-        "→ 📊 Auto document intelligence\n\n"
+        "→ 📊 Auto document intelligence\n"
+        "→ 🌐 Live web search\n\n"
         "Send me a PDF or ask me anything!",
         reply_markup=reply_markup
     )
@@ -185,7 +212,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/compare - Compare two documents\n"
             "/language - Set response language\n"
             "/clear - Clear current document\n\n"
-            "🧠 v4: Smart RAG search active"
+            "🌐 Live web search for current events\n"
+            "🧠 Smart RAG search for documents"
         )
     elif query.data == "about":
         await query.message.reply_text(
@@ -215,8 +243,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/compare - Compare two documents\n"
         "/language - Set response language\n"
         "/clear - Clear current document\n\n"
-        "🧠 v4: Smart RAG search active.\n"
-        "Ask anything even without a document!"
+        "🌐 Asks current questions? I search the web!\n"
+        "🧠 Smart RAG search for your documents"
     )
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -428,21 +456,35 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'document' not in context.user_data:
         await update.message.reply_text("🔍 Phoenix Docs is thinking...")
         try:
-            answer = ask_groq(
-                f"You are Phoenix Docs, part of the Phoenix AI platform. "
-                f"A powerful AI assistant built by Chidibless from Nigeria. "
-                f"Answer any question helpfully and accurately. "
-                f"For questions about current events, news, politics, "
-                f"stock prices, sports results or any real-time information, "
-                f"always say your knowledge has a cutoff date and the user "
-                f"should verify from a current news source like Google or BBC. "
-                f"Never confidently state current leaders, prices or events "
-                f"without this disclaimer. "
-                f"If the question is about documents mention that the user "
-                f"can send a PDF for deeper analysis. "
-                f"Be clear and concise. Respond in {lang}.",
-                question
-            )
+            if needs_web_search(question):
+                await update.message.reply_text("🌐 Searching the web...")
+                search_results = web_search(question)
+                if search_results:
+                    answer = ask_groq(
+                        f"You are Phoenix Docs. Answer the question using "
+                        f"the web search results provided. Be accurate and "
+                        f"cite that information is from current web search. "
+                        f"Respond in {lang}.",
+                        f"Web search results:\n{search_results}\n\n"
+                        f"Question: {question}"
+                    )
+                else:
+                    answer = ask_groq(
+                        f"You are Phoenix Docs. Answer helpfully. "
+                        f"If unsure about current info say to verify online. "
+                        f"Respond in {lang}.",
+                        question
+                    )
+            else:
+                answer = ask_groq(
+                    f"You are Phoenix Docs, part of the Phoenix AI platform. "
+                    f"A powerful AI assistant built by Chidibless from Nigeria. "
+                    f"Answer any question helpfully and accurately. "
+                    f"If the question is about documents mention that the user "
+                    f"can send a PDF for deeper analysis. "
+                    f"Be clear and concise. Respond in {lang}.",
+                    question
+                )
             await update.message.reply_text(answer)
         except Exception:
             await update.message.reply_text(
@@ -509,35 +551,4 @@ async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     def run_server():
-        class PingHandler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(b"Phoenix AI is alive and running")
-            def do_HEAD(self):
-                self.send_response(200)
-                self.end_headers()
-            def log_message(self, format, *args):
-                pass
-        HTTPServer(("0.0.0.0", 8080), PingHandler).serve_forever()
-
-    threading.Thread(target=run_server, daemon=True).start()
-    print("🌐 Keep-alive server started")
-
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("clear", clear_command))
-    app.add_handler(CommandHandler("summarise", summarise_command))
-    app.add_handler(CommandHandler("quiz", quiz_command))
-    app.add_handler(CommandHandler("compare", compare_command))
-    app.add_handler(CommandHandler("language", language_command))
-    app.add_handler(CallbackQueryHandler(handle_language_callback, pattern="^lang_"))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question))
-
-    print("🔥 Phoenix Docs v4.2 is running...")
-    app.run_polling()
+        cla
