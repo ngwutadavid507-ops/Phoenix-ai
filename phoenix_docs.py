@@ -17,6 +17,7 @@ load_dotenv()
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 ADMIN_ID = os.environ.get("ADMIN_ID")
+PORT = int(os.environ.get("PORT", 8080))
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -243,7 +244,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/compare - Compare two documents\n"
         "/language - Set response language\n"
         "/clear - Clear current document\n\n"
-        "🌐 Asks current questions? I search the web!\n"
+        "🌐 Ask current questions? I search the web!\n"
         "🧠 Smart RAG search for your documents"
     )
 
@@ -463,7 +464,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     answer = ask_groq(
                         f"You are Phoenix Docs. Answer the question using "
                         f"the web search results provided. Be accurate and "
-                        f"cite that information is from current web search. "
+                        f"mention information is from current web search. "
                         f"Respond in {lang}.",
                         f"Web search results:\n{search_results}\n\n"
                         f"Question: {question}"
@@ -549,6 +550,4 @@ async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_compare_request(update.message, context)
 
-if __name__ == "__main__":
-    def run_server():
-        cla
+if __name__ == "__main
