@@ -21,38 +21,15 @@ PORT = int(os.environ.get("PORT", 8080))
 
 client = Groq(api_key=GROQ_API_KEY)
 
-def web_search(query, max_results=5):
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(
-                query,
-                max_results=max_results,
-                safesearch='off'
-            ))
-            if not results:
-                return None
-            search_text = ""
-            for r in results:
-                title = r.get('title', '')
-                body = r.get('body', '')
-                href = r.get('href', '')
-                if body:
-                    search_text += f"Source: {title}\n"
-                    search_text += f"Info: {body}\n"
-                    search_text += f"URL: {href}\n\n"
-            return search_text if search_text else None
-    except Exception as e:
-        return None
+ 
 
 def needs_web_search(question):
     current_keywords = [
         "current", "now", "today", "latest", "recent", "right now",
-        "this year", "2024", "2025", "2026",
-        "who is the president", "who is president",
-        "prime minister", "ceo of", "price of",
-        "stock price", "weather", "news", "just happened",
-        "recently", "score", "winner", "election", "result",
-        "who is", "what is the latest", "when did", "what happened"
+        "this year", "2024", "2025", "2026", "who is the president",
+        "who is president", "prime minister", "ceo of", "price of",
+        "stock price", "weather", "news", "just happened", "recently",
+        "score", "winner", "election", "result"
     ]
     q = question.lower()
     return any(k in q for k in current_keywords)
@@ -470,8 +447,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             if needs_web_search(question):
                 await update.message.reply_text("🌐 Searching the web...")
-                search_query = question + " " + "2025 2026"
-search_results = web_search(search_query) 
+                search_results = web_search(question)
                 if search_results:
                     answer = ask_groq(
             f"You are Phoenix Docs. You MUST answer using ONLY the web "
