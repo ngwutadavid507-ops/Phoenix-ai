@@ -550,4 +550,37 @@ async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_compare_request(update.message, context)
 
-if __name__ == "__main
+if __name__ == "__main__":
+    def run_server():
+        class PingHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b"Phoenix AI is alive and running")
+            def do_HEAD(self):
+                self.send_response(200)
+                self.end_headers()
+            def log_message(self, format, *args):
+                pass
+        HTTPServer(("0.0.0.0", PORT), PingHandler).serve_forever()
+
+    threading.Thread(target=run_server, daemon=True).start()
+    print(f"🌐 Keep-alive server started on port {PORT}")
+
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("clear", clear_command))
+    app.add_handler(CommandHandler("summarise", summarise_command))
+    app.add_handler(CommandHandler("quiz", quiz_command))
+    app.add_handler(CommandHandler("compare", compare_command))
+    app.add_handler(CommandHandler("language", language_command))
+    app.add_handler(CallbackQueryHandler(handle_language_callback, pattern="^lang_"))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question))
+
+    print("🔥 Phoenix Docs v4.3 is running...")
+    app.run_polling()
