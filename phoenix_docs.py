@@ -462,13 +462,15 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 search_results = web_search(question)
                 if search_results:
                     answer = ask_groq(
-                        f"You are Phoenix Docs. Answer the question using "
-                        f"the web search results provided. Be accurate and "
-                        f"mention information is from current web search. "
-                        f"Respond in {lang}.",
-                        f"Web search results:\n{search_results}\n\n"
-                        f"Question: {question}"
-                    )
+            f"You are Phoenix Docs. You MUST answer using ONLY the web "
+            f"search results below. Do NOT use your training knowledge. "
+            f"The search results are current and accurate. "
+            f"State the answer directly and confidently from the results. "
+            f"Respond in {lang}.",
+            f"Web search results:\n{search_results}\n\n"
+            f"Question: {question}\n\n"
+            f"Answer ONLY from the search results above."
+        )
                 else:
                     answer = ask_groq(
                         f"You are Phoenix Docs. Answer helpfully. "
