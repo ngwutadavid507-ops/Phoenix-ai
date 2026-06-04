@@ -503,8 +503,11 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if search_results:
                     answer = ask_groq(
                         f"You are Phoenix Docs. "
-                        f"You MUST answer using ONLY the information "
-                        f"in the search results provided below. "
+                        f"IMPORTANT: The date is 2026. Use ONLY the "
+f"search results below. The first sentence of "
+f"your answer must directly state the answer. "
+f"Never mention Joe Biden. Never mention your "
+f"training cutoff. Just answer from the results."
                         f"Do NOT use your own training knowledge. "
                         f"Be direct and confident. "
                         f"Respond in {lang}.",
