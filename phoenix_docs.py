@@ -26,8 +26,7 @@ def web_search(query, max_results=5):
         with DDGS() as ddgs:
             results = list(ddgs.text(
                 query,
-                max_results=max_results,
-                safesearch='off'
+                max_results=max_results
             ))
             if not results:
                 return None
@@ -41,7 +40,7 @@ def web_search(query, max_results=5):
                     search_text += f"Info: {body}\n"
                     search_text += f"URL: {href}\n\n"
             return search_text if search_text else None
-    except Exception as e:
+    except Exception:
         return None
 
 def needs_web_search(question):
@@ -126,7 +125,7 @@ def build_rag_context(query, rag_store):
 async def notify_admin(context, message):
     try:
         await context.bot.send_message(chat_id=ADMIN_ID, text=message)
-    except:
+    except Exception:
         pass
 
 def ask_groq(system_prompt, user_prompt):
@@ -307,9 +306,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_second = 'document' in context.user_data
 
     if is_second:
-        await update.message.reply_text("📄 Reading second document for comparison...")
+        await update.message.reply_text(
+            "📄 Reading second document for comparison..."
+        )
     else:
-        await update.message.reply_text("📄 Phoenix Docs is reading your document...")
+        await update.message.reply_text(
+            "📄 Phoenix Docs is reading your document..."
+        )
 
     file = await doc.get_file()
     file_bytes = await file.download_as_bytearray()
@@ -340,17 +343,26 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['document'] = text
         context.user_data['doc_name'] = doc.file_name
 
-        await update.message.reply_text("🧠 Building smart search index...")
+        await update.message.reply_text(
+            "🧠 Building smart search index..."
+        )
         rag_store = index_document(text)
         context.user_data['rag'] = rag_store
 
         keyboard = [
             [
-                InlineKeyboardButton("📝 Summarise", callback_data="summarise"),
-                InlineKeyboardButton("🎯 Quiz me", callback_data="quiz"),
+                InlineKeyboardButton(
+                    "📝 Summarise", callback_data="summarise"
+                ),
+                InlineKeyboardButton(
+                    "🎯 Quiz me", callback_data="quiz"
+                ),
             ],
             [
-                InlineKeyboardButton("🔍 Compare with another PDF", callback_data="compare")
+                InlineKeyboardButton(
+                    "🔍 Compare with another PDF",
+                    callback_data="compare"
+                )
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -362,8 +374,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"What would you like to do?",
             reply_markup=reply_markup
         )
-
-        await update.message.reply_text("📊 Generating document intelligence report...")
 
         try:
             lang = context.user_data.get('language', 'English')
@@ -388,7 +398,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_summarise(message, context):
     if 'document' not in context.user_data:
-        await message.reply_text("⚠️ No document loaded. Please send a PDF first.")
+        await message.reply_text(
+            "⚠️ No document loaded. Please send a PDF first."
+        )
         return
 
     await message.reply_text("📝 Generating summary...")
@@ -397,16 +409,22 @@ async def handle_summarise(message, context):
 
     try:
         answer = ask_groq(
-            f"You are Phoenix Docs. Provide a comprehensive summary. Respond in {lang}.",
-            f"Document:\n{document}\n\nProvide a detailed summary covering all key points."
+            f"You are Phoenix Docs. Provide a comprehensive summary. "
+            f"Respond in {lang}.",
+            f"Document:\n{document}\n\n"
+            f"Provide a detailed summary covering all key points."
         )
         await message.reply_text(f"📝 Summary:\n\n{answer}")
     except Exception:
-        await message.reply_text("⚠️ Summary timed out. Please try again.")
+        await message.reply_text(
+            "⚠️ Summary timed out. Please try again."
+        )
 
 async def handle_quiz(message, context):
     if 'document' not in context.user_data:
-        await message.reply_text("⚠️ No document loaded. Please send a PDF first.")
+        await message.reply_text(
+            "⚠️ No document loaded. Please send a PDF first."
+        )
         return
 
     await message.reply_text("🎯 Generating quiz questions...")
@@ -415,22 +433,30 @@ async def handle_quiz(message, context):
 
     try:
         answer = ask_groq(
-            f"You are Phoenix Docs. Generate quiz questions. Respond in {lang}.",
+            f"You are Phoenix Docs. Generate quiz questions. "
+            f"Respond in {lang}.",
             f"Document:\n{document}\n\n"
-            f"Generate 5 multiple choice questions with 4 options each (A, B, C, D). "
+            f"Generate 5 multiple choice questions with 4 options "
+            f"each (A, B, C, D). "
             f"Include the correct answer at the end of each question."
         )
         await message.reply_text(f"🎯 Quiz Questions:\n\n{answer}")
     except Exception:
-        await message.reply_text("⚠️ Quiz generation timed out. Please try again.")
+        await message.reply_text(
+            "⚠️ Quiz generation timed out. Please try again."
+        )
 
 async def handle_compare_request(message, context):
     if 'document' not in context.user_data:
-        await message.reply_text("⚠️ No document loaded. Please send a PDF first.")
+        await message.reply_text(
+            "⚠️ No document loaded. Please send a PDF first."
+        )
         return
 
     if 'document2' not in context.user_data:
-        await message.reply_text("📄 Send me the second PDF to compare with.")
+        await message.reply_text(
+            "📄 Send me the second PDF to compare with."
+        )
         return
 
     await message.reply_text("🔍 Comparing documents...")
@@ -440,7 +466,8 @@ async def handle_compare_request(message, context):
 
     try:
         answer = ask_groq(
-            f"You are Phoenix Docs. Compare two documents clearly. Respond in {lang}.",
+            f"You are Phoenix Docs. Compare two documents clearly. "
+            f"Respond in {lang}.",
             f"Document 1:\n{doc1}\n\nDocument 2:\n{doc2}\n\n"
             f"Compare these documents. List:\n"
             f"1. Key similarities\n"
@@ -449,7 +476,9 @@ async def handle_compare_request(message, context):
         )
         await message.reply_text(f"🔍 Comparison Result:\n\n{answer}")
     except Exception:
-        await message.reply_text("⚠️ Comparison timed out. Please try again.")
+        await message.reply_text(
+            "⚠️ Comparison timed out. Please try again."
+        )
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -470,33 +499,38 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             if needs_web_search(question):
                 await update.message.reply_text("🌐 Searching the web...")
-                search_query = question + " " + "2025 2026"
-search_results = web_search(search_query) 
+                search_query = question + " 2025 2026"
+                search_results = web_search(search_query)
                 if search_results:
                     answer = ask_groq(
-            f"You are Phoenix Docs. You MUST answer using ONLY the web "
-            f"search results below. Do NOT use your training knowledge. "
-            f"The search results are current and accurate. "
-            f"State the answer directly and confidently from the results. "
-            f"Respond in {lang}.",
-            f"Web search results:\n{search_results}\n\n"
-            f"Question: {question}\n\n"
-            f"Answer ONLY from the search results above."
-        )
+                        f"You are Phoenix Docs. You MUST answer using "
+                        f"ONLY the web search results below. "
+                        f"Do NOT use your training knowledge at all. "
+                        f"The search results are current and accurate. "
+                        f"State the answer directly and confidently "
+                        f"from the results. Respond in {lang}.",
+                        f"Web search results:\n{search_results}\n\n"
+                        f"Question: {question}\n\n"
+                        f"Answer ONLY from the search results above. "
+                        f"Be direct and confident."
+                    )
                 else:
                     answer = ask_groq(
-                        f"You are Phoenix Docs. Answer helpfully. "
-                        f"If unsure about current info say to verify online. "
+                        f"You are Phoenix Docs. The web search returned "
+                        f"no results. Answer from your knowledge but "
+                        f"clearly state the user should verify online "
+                        f"for the most current information. "
                         f"Respond in {lang}.",
                         question
                     )
             else:
                 answer = ask_groq(
-                    f"You are Phoenix Docs, part of the Phoenix AI platform. "
-                    f"A powerful AI assistant built by Chidibless from Nigeria. "
+                    f"You are Phoenix Docs, part of the Phoenix AI "
+                    f"platform. A powerful AI assistant built by "
+                    f"Chidibless from Nigeria. "
                     f"Answer any question helpfully and accurately. "
-                    f"If the question is about documents mention that the user "
-                    f"can send a PDF for deeper analysis. "
+                    f"If the question is about documents mention that "
+                    f"the user can send a PDF for deeper analysis. "
                     f"Be clear and concise. Respond in {lang}.",
                     question
                 )
@@ -526,26 +560,33 @@ search_results = web_search(search_query)
         if rag_store:
             context_text = build_rag_context(question, rag_store)
             answer = ask_groq_rag(
-                f"You are Phoenix Docs. Answer questions based only on the provided "
-                f"document excerpts. Be clear and helpful. "
-                f"Keep answers under 500 words. Respond in {lang}.",
+                f"You are Phoenix Docs. Answer questions based only "
+                f"on the provided document excerpts. Be clear and "
+                f"helpful. Keep answers under 500 words. "
+                f"Respond in {lang}.",
                 question,
                 context_text
             )
         else:
             document = context.user_data['document']
             answer = ask_groq(
-                f"You are Phoenix Docs. Answer questions based only on the document. "
-                f"Be clear and helpful. Keep answers under 500 words. Respond in {lang}.",
+           
+                f"You are Phoenix Docs. Answer questions based only "
+                f"on the document. Be clear and helpful. "
+                f"Keep answers under 500 words. Respond in {lang}.",
                 f"Document:\n{document}\n\nQuestion:\n{question}"
             )
 
         await update.message.reply_text(answer)
 
     except Exception:
-        await update.message.reply_text("⚠️ Analysis timed out. Please try again.")
+        await update.message.reply_text(
+            "⚠️ Analysis timed out. Please try again."
+        )
 
-async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_language_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     query = update.callback_query
     await query.answer()
     lang = query.data.replace("lang_", "")
@@ -555,13 +596,19 @@ async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT
         f"All responses will now be in {lang}."
     )
 
-async def summarise_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def summarise_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     await handle_summarise(update.message, context)
 
-async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def quiz_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     await handle_quiz(update.message, context)
 
-async def compare_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def compare_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     await handle_compare_request(update.message, context)
 
 if __name__ == "__main__":
@@ -591,10 +638,20 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("quiz", quiz_command))
     app.add_handler(CommandHandler("compare", compare_command))
     app.add_handler(CommandHandler("language", language_command))
-    app.add_handler(CallbackQueryHandler(handle_language_callback, pattern="^lang_"))
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_language_callback, pattern="^lang_"
+        )
+    )
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_question))
+    app.add_handler(
+        MessageHandler(filters.Document.PDF, handle_document)
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND, handle_question
+        )
+    )
 
     print("🔥 Phoenix Docs v4.3 is running...")
     app.run_polling()
