@@ -1,5 +1,4 @@
-python-telegram-bot
-groq
-pypdf2
-python-dotenv
+python-telegram-bot==21.1.1
+PyPDF2
 requests
+python-dotenv
